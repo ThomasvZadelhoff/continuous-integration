@@ -6,27 +6,12 @@ name: Building Docker images
 
 on:
   workflow_call:
-    inputs:
-      project:
-        description: "ArgoCD Autopilot project name"
-        type: string
-        required: true
-      application:
-        description: "ArgoCD Autopilot app name"
-        type: string
-        required: true
-      organisation:
-        description: "[Overwrite] $github_repository_owner"
-        type: string
-        required: false
     secrets:
       token:
         required: true
 
 env:
   registry: ghcr.io
-  image_name: ${{ github.repository }}
-  organisation: ${{inputs.organisation || github.repository_owner}}
 
 jobs:
   build-and-push:
@@ -57,9 +42,9 @@ jobs:
         uses: actions/cache@v2
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-${{ env.image_name }}-${{ github.sha }}
+          key: ${{ runner.os }}-${{ github.repository }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-${{ env.image_name }}
+            ${{ runner.os }}-${{ github.repository }}
 
       ###########################
       # Build Next.js
@@ -68,7 +53,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v3
         with:
-          images: ${{ env.registry }}/${{ env.image_name }}
+          images: ${{ env.registry }}/${{ github.repository }}
           tags: type=sha,prefix=,format=long
 
       - name: 🚀 Next.js - Build and push
@@ -87,12 +72,3 @@ jobs:
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-
-      - name: 🎉 Releasing
-        uses: benc-uk/workflow-dispatch@master
-        with:
-          workflow: Release new version
-          repo: ${{ env.organisation }}/continuous-delivery
-          ref: "refs/heads/main"
-          token: ${{ secrets.token }}
-          inputs: '{ "image": "ghcr.io/nextjs=${{ steps.meta.outputs.tags }}", "project": "${{ inputs.project }}", "application": "${{ inputs.application }}" }'

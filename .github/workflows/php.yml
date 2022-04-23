@@ -7,33 +7,19 @@ name: Building Docker images
 on:
   workflow_call:
     inputs:
-      project:
-        description: "ArgoCD Autopilot project name"
-        type: string
-        required: true
-      application:
-        description: "ArgoCD Autopilot app name"
-        type: string
-        required: true
       application_type:
         required: true
         type: string
-      build_worker:
+      with_nginx:
         required: true
         default: false
         type: boolean
-      organisation:
-        description: "[Overwrite] $github_repository_owner"
-        type: string
-        required: false
     secrets:
       token:
         required: true
 
 env:
   registry: ghcr.io
-  image_name: ${{ github.repository }}
-  organisation: ${{inputs.organisation || github.repository_owner}}
 
 jobs:
   build-and-push:
@@ -64,9 +50,9 @@ jobs:
         uses: actions/cache@v2
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-${{ env.image_name }}-${{ github.sha }}
+          key: ${{ runner.os }}-${{ github.repository }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-${{ env.image_name }}
+            ${{ runner.os }}-${{ github.repository }}
 
       ###########################
       # Build PHP
@@ -75,7 +61,7 @@ jobs:
         id: php_meta
         uses: docker/metadata-action@v3
         with:
-          images: ${{ env.registry }}/${{ env.image_name }}/php
+          images: ${{ env.registry }}/${{ github.repository }}/php
           tags: type=sha,prefix=,format=long
 
       - name: 🚀 PHP - Build and push
@@ -92,50 +78,27 @@ jobs:
           cache-to: type=local,mode=max,dest=/tmp/.buildx-cache-new
 
       ###########################
-      # Build worker (optional)
+      # Build NGINX
       ###########################
-      - name: ⤵️ Worker - Adding metadata
-        id: worker_meta
-        if: ${{ inputs.build_worker }}
+      - name: ⤵️ NGINX - Adding metadata
+        if: ${{ inputs.with_nginx }}
+        id: nginx_meta
         uses: docker/metadata-action@v3
         with:
-          images: ${{ env.registry }}/${{ env.image_name }}/php_queue
+          images: ${{ env.registry }}/${{ github.repository }}/nginx
           tags: type=sha,prefix=,format=long
 
-      - name: 🚀 Worker - Build and push
-        uses: docker/build-push-action@v2
-        if: ${{ inputs.build_worker }}
-        with:
-          context: .
-          builder: ${{ steps.buildx.outputs.name }}
-          file: .ci/${{ inputs.application_type }}/Dockerfile
-          push: true
-          target: ${{ inputs.application_type }}_queue
-          tags: ${{ steps.worker_meta.outputs.tags }}
-          labels: ${{ steps.worker_meta.outputs.labels }}
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,mode=max,dest=/tmp/.buildx-cache-new
-
-      ###########################
-      # Build Caddy
-      ###########################
-      - name: ⤵️ Caddy - Adding metadata
-        id: caddy_meta
-        uses: docker/metadata-action@v3
-        with:
-          images: ${{ env.registry }}/${{ env.image_name }}/caddy
-          tags: type=sha,prefix=,format=long
-
-      - name: 🚀 Caddy - Build and push
+      - name: 🚀 NGINX - Build and push
+        if: ${{ inputs.with_nginx }}
         uses: docker/build-push-action@v2
         with:
           context: .
           builder: ${{ steps.buildx.outputs.name }}
           file: .ci/${{ inputs.application_type }}/Dockerfile
           push: true
-          target: "caddy"
-          tags: ${{ steps.caddy_meta.outputs.tags }}
-          labels: ${{ steps.caddy_meta.outputs.labels }}
+          target: "nginx"
+          tags: ${{ steps.nginx_meta.outputs.tags }}
+          labels: ${{ steps.nginx_meta.outputs.labels }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,mode=max,dest=/tmp/.buildx-cache-new
 
@@ -143,12 +106,3 @@ jobs:
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-
-      - name: 🎉 Releasing
-        uses: benc-uk/workflow-dispatch@master
-        with:
-          workflow: Release new version
-          repo: ${{ env.organisation }}/continuous-delivery
-          ref: "refs/heads/main"
-          token: ${{ secrets.token }}
-          inputs: '{ "image": "ghcr.io/php=${{ steps.php_meta.outputs.tags }} ghcr.io/php_queue=${{ steps.worker_meta.outputs.tags || steps.php_meta.outputs.tags }} ghcr.io/caddy=${{ steps.caddy_meta.outputs.tags }}", "project": "${{ inputs.project }}", "application": "${{ inputs.application }}" }'
